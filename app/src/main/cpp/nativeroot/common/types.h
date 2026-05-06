@@ -64,6 +64,9 @@ namespace duckdetector::nativeroot {
         bool kernelpatch_side_channel_detected = false;
         std::string kernelpatch_side_channel_detail;
         bool devpts_abnormal_permission_detected = false;
+        bool devpts_abnormal_permission_available = false;
+        int devpts_abnormal_permission_checked_count = 0;
+        int devpts_abnormal_permission_denied_count = 0;
         std::string devpts_abnormal_permission_detail;
         bool ksu_supercall_attempted = false;
         bool ksu_supercall_probe_hit = false;

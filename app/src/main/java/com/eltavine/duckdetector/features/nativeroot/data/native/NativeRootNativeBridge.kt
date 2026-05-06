@@ -92,9 +92,20 @@ class NativeRootNativeBridge {
             "KSU_VERSION" -> copy(kernelSuVersion = value.toLongOrNull() ?: kernelSuVersion)
             "PRCTL_HIT" -> copy(prctlProbeHit = value.asBool())
             "KERNELPATCH_SIDE_CHANNEL_ATTACK" -> copy(kernelPatchSideChannel = value.asBool())
-            "KERNELPATCH_SIDE_CHANNEL_DETAIL" -> copy(kernelPatchSideChannelDetail = value.replace("\\n", "\n"))
+            "KERNELPATCH_SIDE_CHANNEL_DETAIL" -> copy(kernelPatchSideChannelDetail = value.decodeValue())
             "DEVPTS_ABNORMAL_PERMISSION_FOUND" -> copy(devptsAbnormalPermission = value.asBool())
-            "DEVPTS_ABNORMAL_PERMISSION_DETAIL" -> copy(devptsAbnormalPermissionDetail = value.replace("\\n", "\n"))
+            "DEVPTS_ABNORMAL_PERMISSION_AVAILABLE" -> copy(devptsAbnormalPermissionAvailable = value.asBool())
+            "DEVPTS_ABNORMAL_PERMISSION_CHECKED" -> copy(
+                devptsAbnormalPermissionCheckedCount = value.toIntOrNull()
+                    ?: devptsAbnormalPermissionCheckedCount
+            )
+
+            "DEVPTS_ABNORMAL_PERMISSION_DENIED" -> copy(
+                devptsAbnormalPermissionDeniedCount = value.toIntOrNull()
+                    ?: devptsAbnormalPermissionDeniedCount
+            )
+
+            "DEVPTS_ABNORMAL_PERMISSION_DETAIL" -> copy(devptsAbnormalPermissionDetail = value.decodeValue())
             "KSU_SUPERCALL_ATTEMPTED" -> copy(ksuSupercallAttempted = value.asBool())
             "KSU_SUPERCALL_HIT" -> copy(ksuSupercallProbeHit = value.asBool())
             "KSU_SUPERCALL_BLOCKED" -> copy(ksuSupercallBlocked = value.asBool())

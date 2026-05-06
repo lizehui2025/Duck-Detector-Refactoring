@@ -16,99 +16,144 @@
 
 #include "nativeroot/probes/devpts_abnormal_permission_probe.h"
 
+#include <cerrno>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <string>
-#include <vector>
 
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/xattr.h>
 #include <unistd.h>
-#include <cstdlib>
 
 namespace duckdetector::nativeroot {
 
-    void check_and_fill_finding(const char* path, ProbeResult& result) {
-        struct stat st{};
-        if (lstat(path, &st) == -1) {
-            return;
+    namespace {
+
+        void append_line(std::string &target, const std::string &line) {
+            target += line;
+            target += '\n';
         }
 
-        result.checked_count++;
-        char attr_val[256] = {0};
-        bool is_abnormal = false;
-
-        Finding finding;
-        finding.group = "devpts_permission";
-        finding.label = path;
-        finding.severity = Severity::kWarning;
-
-        finding.detail += "Test: ";
-        finding.detail += path;
-        finding.detail += "\n";
-
-        finding.detail += "Owner: ";
-        finding.detail += std::to_string(st.st_uid);
-        finding.detail += "\n";
-
-        if (st.st_uid == 0) {
-            result.flags.root = true;
-            is_abnormal = true;
-            finding.detail += "Found ROOT PTY\n";
+        void note_error(
+                ProbeResult &result,
+                const char *path,
+                const char *step,
+                const int error
+        ) {
+            result.denied_count++;
+            append_line(result.extra_text, std::string("Test: ") + path);
+            append_line(result.extra_text, std::string(step) + " errno=" + std::to_string(error));
+            result.extra_text += '\n';
         }
 
-        ssize_t len = getxattr(path, "security.selinux", attr_val, sizeof(attr_val) - 1);
-        if (len > 0) {
-            attr_val[len] = '\0';
-            finding.detail += "SELinux: ";
-            finding.detail += attr_val;
-            finding.detail += "\n";
-
-            if (strstr(attr_val, "ksu_file") != nullptr) {
-                result.flags.root = true;
-                result.flags.kernel_su = true;
-                is_abnormal = true;
-                finding.detail += "Found KernelSU file Domain\n";
+        void inspect_pty_path(
+                const char *path,
+                ProbeResult &result,
+                const bool required_sample
+        ) {
+            struct stat st{};
+            if (lstat(path, &st) == -1) {
+                if (required_sample) {
+                    note_error(result, path, "lstat failed", errno);
+                }
+                return;
             }
+
+            result.checked_count++;
+            char attr_val[256] = {0};
+            bool is_abnormal = false;
+
+            Finding finding;
+            finding.group = "PATH";
+            finding.label = path;
+            finding.severity = Severity::kWarning;
+
+            append_line(finding.detail, std::string("Test: ") + path);
+            append_line(finding.detail, std::string("Owner: ") + std::to_string(st.st_uid));
+
+            if (st.st_uid == 0) {
+                result.flags.root = true;
+                is_abnormal = true;
+                append_line(finding.detail, "Found ROOT PTY");
+            }
+
+            const ssize_t len = getxattr(path, "security.selinux", attr_val, sizeof(attr_val) - 1);
+            if (len >= 0) {
+                attr_val[len] = '\0';
+                append_line(
+                        finding.detail,
+                        std::string("SELinux: ") + (len > 0 ? attr_val : "<empty>")
+                );
+
+                if (strstr(attr_val, "ksu_file") != nullptr) {
+                    result.flags.root = true;
+                    result.flags.kernel_su = true;
+                    is_abnormal = true;
+                    append_line(finding.detail, "Found KernelSU file Domain");
+                }
+            } else {
+                const int error = errno;
+                result.denied_count++;
+                append_line(
+                        finding.detail,
+                        std::string("SELinux: unavailable errno=") + std::to_string(error)
+                );
+            }
+
+            if (is_abnormal) {
+                finding.value = "Abnormal Permission Detected";
+                finding.severity = Severity::kDanger;
+                result.findings.push_back(finding);
+                result.hit_count++;
+            }
+
+            result.extra_text += finding.detail;
+            result.extra_text += '\n';
         }
 
-        if (is_abnormal) {
-            finding.value = "Abnormal Permission Detected\n";
-            finding.severity = Severity::kDanger;
-            result.findings.push_back(finding);
-            result.hit_count++;
-        }
-
-        result.extra_text += finding.detail;
-        result.extra_text += '\n';
-    }
+    }  // namespace
 
     ProbeResult run_devpts_permission_check() {
         ProbeResult result;
         result.extra_text = "";
 
-        // scan current PTYs, we don't have search permission
-        // So, let's manually test from 0 to 10
+        // We cannot enumerate every PTY on Android, so sample the low range plus one fresh PTY.
         char path_buf[32];
         for (int i = 0; i <= 10; ++i) {
             snprintf(path_buf, sizeof(path_buf), "/dev/pts/%d", i);
-            check_and_fill_finding(path_buf, result);
+            inspect_pty_path(path_buf, result, false);
         }
 
-        // Create a new PTY, KernelSU with devpts hook will make it to u:object_r:ksu_file:s0
-        int master_fd = posix_openpt(O_RDWR | O_NOCTTY);
-        if (master_fd != -1) {
-            if (grantpt(master_fd) == 0 && unlockpt(master_fd) == 0) {
-                char* pts_name = ptsname(master_fd);
-                if (pts_name) {
-                    check_and_fill_finding(pts_name, result);
-                }
-            }
+        // KernelSU devpts hooks can stamp the newly allocated PTY as u:object_r:ksu_file:s0.
+        const int master_fd = posix_openpt(O_RDWR | O_NOCTTY);
+        if (master_fd == -1) {
+            note_error(result, "/dev/pts/new", "posix_openpt failed", errno);
+            return result;
+        }
+
+        if (grantpt(master_fd) != 0) {
+            note_error(result, "/dev/pts/new", "grantpt failed", errno);
             close(master_fd);
+            return result;
         }
 
+        if (unlockpt(master_fd) != 0) {
+            note_error(result, "/dev/pts/new", "unlockpt failed", errno);
+            close(master_fd);
+            return result;
+        }
+
+        char *pts_name = ptsname(master_fd);
+        if (pts_name != nullptr) {
+            inspect_pty_path(pts_name, result, true);
+        } else {
+            note_error(result, "/dev/pts/new", "ptsname failed", errno);
+        }
+
+        close(master_fd);
         return result;
     }
 
-} // namespace duckdetector::nativeroot
+}  // namespace duckdetector::nativeroot

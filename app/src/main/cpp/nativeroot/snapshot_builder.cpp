@@ -75,6 +75,11 @@ namespace duckdetector::nativeroot {
         snapshot.kernelpatch_side_channel_detected = kernelpatch_supercall_latency_probe.flags.apatch;
         snapshot.kernelpatch_side_channel_detail = kernelpatch_supercall_latency_probe.extra_text;
         snapshot.devpts_abnormal_permission_detected = devpts_abnormal_permission_probe.flags.root || devpts_abnormal_permission_probe.flags.kernel_su;
+        snapshot.devpts_abnormal_permission_available =
+                devpts_abnormal_permission_probe.checked_count > 0 &&
+                devpts_abnormal_permission_probe.denied_count == 0;
+        snapshot.devpts_abnormal_permission_checked_count = devpts_abnormal_permission_probe.checked_count;
+        snapshot.devpts_abnormal_permission_denied_count = devpts_abnormal_permission_probe.denied_count;
         snapshot.devpts_abnormal_permission_detail = devpts_abnormal_permission_probe.extra_text;
         snapshot.ksu_supercall_attempted = ksu_supercall_probe.checked_count > 0;
         snapshot.ksu_supercall_probe_hit = ksu_supercall_probe.flags.kernel_su;
